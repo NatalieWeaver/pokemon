@@ -1,0 +1,478 @@
+---
+title: "Pokemon Stats Analysis, Generations I through VII"
+output: html_notebook
+  #html_document:
+    #df_print: paged
+---
+
+```{r, setup}
+# knitr options
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  echo = TRUE,
+  fig.align = "center",
+  fig.height = 7,
+  fig.width = 10.5,
+  dpi = 500)
+
+# packages
+library(pacman)
+p_load(
+  tidyverse, magrittr, janitor, lubridate,
+  viridis, cowplot,
+  caret, caretEnsemble, rpart, rpart.plot)
+
+# text size for ggplots
+font_size <- 14
+```
+
+This is a really cool data set that I want to analyze eventually, but for now just doing some tests with R Notebooks.
+
+## The Data
+
+#### Load and inspect
+```{r}
+# load in the data
+pokemon <- read_csv("pokemon.csv")
+```
+
+```{r}
+# get the column specs
+pokemon %>% spec() %>% print()
+```
+
+```{r}
+# the pokedex numbers are unique row id's, put them at the front
+pokemon %<>% relocate(pokedex_number, name)
+
+# capture rate should be numeric but is chr, let's convert it
+pokemon %<>% mutate(capture_rate = as.numeric(capture_rate))
+
+# see the head of the data
+pokemon %>% head()
+```
+
+#### Let's get a sense of pokemons' stats by primary type
+
+```{r}
+# reformat the data to get the mean of each stat grouped by type
+pok_by_type <- pokemon %>% group_by(type1) %>%
+  summarize(
+    mean_hp = mean(hp),
+    mean_attack = mean(attack),
+    mean_sp_attack = mean(sp_attack),
+    mean_defense = mean(defense),
+    mean_sp_defense = mean(sp_defense),
+    mean_speed = mean(speed)
+  )
+
+pok_by_type %>% head()
+
+# and another format for the same data
+# easier to use with ggplot (but the first format is more human-readable)
+pok_by_type_longer <- pok_by_type %>% pivot_longer(
+  cols = !type1,
+  names_to = "stat",
+  values_to = "value"
+)
+
+pok_by_type_longer %>% head()
+```
+
+```{r}
+# make a bar graph to show the mean HP for each pokemon type
+pok_type_bar <- ggplot(data = pok_by_type, aes(x = type1, y = mean_hp)) +
+  geom_bar(stat = "identity", aes(fill = type1)) +
+  guides(x = guide_axis(angle = 90)) +
+  scale_fill_viridis(discrete = TRUE, guide = FALSE) +
+  labs(
+    title = "Mean HP by Pokemon Primary Type",
+    subtitle = "For pokemon in Generations I through VII",
+    x = "Primary Type",
+    y = "Mean HP",
+    fill = "Primary Type"
+  ) +
+  theme(text = element_text(size = font_size))
+
+# to see the legend, change guide = FALSE in scale_fill_viridis
+# to guide = guide_legend(ncol = 2) (need two columns because lots of types)
+
+# view the plot
+pok_type_bar
+```
+```{r}
+# make a stacked bar graph of all stats for each pokemon type
+pok_type_stacked <- ggplot(data = pok_by_type_longer, aes(x = type1, y = value)) +
+  geom_bar(stat = "identity", aes(fill = stat)) +
+  guides(x = guide_axis(angle = 90)) +
+  scale_fill_viridis(
+    discrete = TRUE,
+    labels = c("Attack", "Defense", "HP", "Special Attack", "Special Defense", "Speed")
+  ) +
+  labs(
+    title = "Mean of Total Statistics by Pokemon Primary Type",
+    subtitle = "For pokemon in Generations I through VII",
+    x = "Primary Type",
+    y = "Mean of Total Statistics",
+    fill = "Statistic"
+  ) +
+  theme(text = element_text(size = font_size))
+
+pok_type_stacked
+```
+
+#### What are the distributions of pokemon's stats and other attributes?
+
+```{r}
+# distribution of attack
+attack_hist <- ggplot(data = pokemon, aes(x = attack)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = font_size))
+
+# distribution of special attack
+sp_attack_hist <- ggplot(data = pokemon, aes(x = sp_attack)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = font_size))
+
+# distribution of defense
+defense_hist <- ggplot(data = pokemon, aes(x = defense)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = font_size))
+
+# distribution of special defense
+sp_defense_hist <- ggplot(data = pokemon, aes(x = sp_defense)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = font_size))
+
+# distribution of speed
+speed_hist <- ggplot(data = pokemon, aes(x = speed)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = font_size))
+
+# distribution of hp
+hp_hist <- ggplot(data = pokemon, aes(x = hp)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = font_size))
+
+plot_grid(attack_hist, sp_attack_hist, defense_hist, sp_defense_hist, speed_hist, hp_hist, ncol = 2) 
+```
+#### Dealing with missing values
+
+There are some missing values in our data. 
+
+* 384 pokemon are missing a `type2`. These pokemon only have one type. We will replace the `NA`'s in this column with the string `"none"`.
+* 98 pokemon are missing a `percentage_male`. These pokemon are genderless. We will create a new column called `has_gender` which will be `1` if the pokemon has a gender (i.e., the `percentage_male` value is not missing) and `0` if the pokemon is genderless. Then, we will use the `medianImpute` method in the `preProcess` function from the `caret` package to replace the `NA`'s with the median of the non-missing values from the column.
+* 20 pokemon are missing both `height_m` and `weight_kg` (no pokemon is missing just one of those values). It is unclear why this data is missing, and may simply be an error with the web scraper. For simplicity, we will `medianImpute` both of these values. Another option would be to use `knnImpute`, but this method is more complicated, requires dummies, and may suffer from the curse of dimensionality.
+* 1 pokemon has a missing `capture_rate`, almost certainly due to a problem with the web scraper (the initial value was a non-numeric string, and when coerced to a numeric type this value because an `NA`). We'll `medianImpute` this as well.
+
+```{r}
+# replace NA's in type2 column and create has_gender column
+pokemon %<>% mutate(
+  type2 = replace_na(type2, "none"),
+  has_gender = as.numeric(!is.na(percentage_male))
+)
+
+# create preProcess object and use it to medianImpute remaining NA's
+pokemon_clean <- pokemon %>% preProcess(method = "medianImpute") %>% 
+  predict(newdata = pokemon)
+
+# also, remove the columns we definitely won't use
+# and let's kick capture_rate to the end so it's easier to find
+pokemon_clean %<>% select(-abilities, -classfication, -japanese_name) %>%
+  relocate(capture_rate, .after = has_gender)
+```
+
+## Analysis
+
+### Inference
+
+Questions:
+
+* Which factors affect a pokemon's capture rate?
+* Do the pokemon's size or type affect its max HP? For example, can bigger pokemon or pokemon of certain types take more damage?
+
+(I'll save this section for later because I don't understand inference as well)
+
+### Prediction
+
+Questions:
+
+* Can we predict a pokemon's capture rate?
+* Can we predict whether a pokemon is legendary based on its stats? What about its primary type? What if we include predictors like size (height and weight) and capture rate?
+
+#### Predicting a pokemon's capture rate
+
+##### Reformat the data
+
+Several machine learning methods, including KNN and elasticnet, require categorical variables to be converted to dummies and data to be standardized (centered and scaled).
+
+```{r}
+# create dummy variables
+pokemon_dummy <- dummyVars(
+    capture_rate ~ .,
+    data = pokemon_clean %>% select(-c("pokedex_number", "name")),
+    fullRank = TRUE
+  ) %>% 
+  predict(newdata = pokemon_clean) %>% 
+  as.data.frame()
+
+# standardize the variables that are not booleans
+# also don't standardize the outcome and id columns
+pokemon_std <- preProcess(
+    x = pokemon_clean %>% select(
+      -c("capture_rate", "pokedex_number", "name", "is_legendary", "has_gender")
+    ),
+    method = c("center", "scale")
+  ) %>% 
+  predict(newdata = pokemon_dummy) %>% 
+  as.data.frame()
+
+# add back in the pokedex_number and name columns
+# which we took out when we made the pokemon_dummy dataframe
+pokemon_std %<>% mutate(
+    pokedex_number = pokemon_clean$pokedex_number,
+    name = pokemon_clean$name,
+    capture_rate = pokemon_clean$capture_rate
+  ) %>%
+  relocate(pokedex_number, name)
+
+pokemon_std %>% head()
+```
+
+##### Split into train and test sets
+
+We'll set a seed and do this the same way for both the dummied-and-standardized data (for KNN and elasticnet) and the regular clean data (for tree-based methods). We'll remove the outcome variable from the test sets. 
+
+```{r}
+# set seed
+set.seed(46848)
+
+# randomly select 20% of the data to be used for testing
+test_rows <- sample(
+    x = pokemon_clean$pokedex_number,
+    size = nrow(pokemon_clean) * 0.2,
+    replace = FALSE
+  ) %>% as.numeric()
+
+# split regular data
+train <- pokemon_clean %>% filter(!pokedex_number %in% test_rows)
+test <- pokemon_clean %>% filter(pokedex_number %in% test_rows) %>%
+  select(-capture_rate)
+
+# split standardized data
+train_std <- pokemon_std %>% filter(!pokedex_number %in% test_rows)
+test_std <- pokemon_std %>% filter(pokedex_number %in% test_rows) %>%
+  select(-capture_rate)
+```
+
+##### Fit some models
+
+###### K-Nearest Neighbors
+
+To avoid the curse of dimensionality, we only want to use a few predictors in a KNN model. We might be able to select the best subset of predictors using a forward stepwise selection process or similar, but that seems too hard. Instead, let's see how well we can do using just the fighting stats (hp, attack, etc.) in one model, and just the non-fighting stats (height, happiness, etc.) in another model.
+
+```{r}
+# set new seed for this code chunk
+set.seed(98329)
+
+# KNN model with fighting stats
+knn_fight <- train(
+  # the model: predict capture rate based on stats
+  capture_rate ~ hp + attack + sp_attack + defense + sp_defense + speed,
+  data = train_std %>% select(-c("pokedex_number", "name")),
+  method = "knn",
+  # tune parameters using 5-fold cross-validation
+  trControl = trainControl(method = "cv", number = 5),
+  # tuning parameter: the number of nearest neighbors, k
+  tuneGrid = expand.grid(k = seq(1, font_size, by = 1))
+)
+
+ggplot(knn_fight) + theme(text = element_text(size = font_size))
+```
+
+```{r}
+knn_fight$bestTune
+```
+
+```{r}
+# make vector of predictions
+knn_fight_pred <- knn_fight %>% predict(newdata = test_std)
+
+# make dataframe to compare with actual values
+knn_fight_df <- data.frame(
+  pokedex_number = test_std %>% select(pokedex_number),
+  capture_rate = pokemon_std %>% 
+    filter(pokedex_number %in% test_rows) %>% 
+    select(capture_rate),
+  pred = knn_fight_pred
+)
+
+head(knn_fight_df)
+```
+
+```{r}
+# set new seed for this code chunk
+set.seed(28699)
+
+# KNN model with non-fighting stats
+knn_peace <- train(
+  # the model: predict capture rate based on stats
+  capture_rate ~ height_m + weight_kg + base_happiness + experience_growth + percentage_male,
+  data = train_std %>% select(-c("pokedex_number", "name")),
+  method = "knn",
+  # tune parameters using 5-fold cross-validation
+  trControl = trainControl(method = "cv", number = 5),
+  # tuning parameter: the number of nearest neighbors, k
+  tuneGrid = expand.grid(k = seq(1, font_size, by = 1))
+)
+
+ggplot(knn_peace) + theme(text = element_text(size = font_size))
+```
+
+```{r}
+knn_peace$bestTune
+```
+
+```{r}
+# make vector of predictions
+knn_peace_pred <- knn_peace %>% predict(newdata = test_std)
+
+# make dataframe to compare with actual values
+knn_peace_df <- data.frame(
+  pokedex_number = test_std %>% select(pokedex_number),
+  capture_rate = pokemon_std %>% 
+    filter(pokedex_number %in% test_rows) %>% 
+    select(capture_rate),
+  pred = knn_peace_pred
+)
+
+head(knn_peace_df)
+```
+
+###### Elasticnet
+
+Elasticnet is a linear combination of LASSO and ridge regression. You should pretty much always use it, because if either LASSO or ridge is actually much better, the elasticnet model will basically become a LASSO or a ridge.
+
+```{r}
+# set a new seed for this chunk
+set.seed(83352)
+
+# set range of lambdas, the size of the penalty
+lambdas = 10 ^ seq(from = 1, to = -3, length = 1e2)
+
+# set range of alphas, the relative weight on ridge and lasso penalties
+alphas = seq(from = 0, to = 1, by = 0.05)
+
+# elasticnet model
+net <- train(
+  # the model: regress capture_rate on all predictors
+  capture_rate ~ .,
+  data = train_std %>% select(-c("pokedex_number", "name")),
+  method = "glmnet",
+  # evaluate performance with 5-fold cross validation
+  trControl = trainControl(method = "cv", number = 5),
+  # the tuning parameters: the alphas and lambdas defined above
+  tuneGrid = expand.grid(alpha = alphas, lambda = lambdas)
+)
+
+```
+
+```{r}
+net$bestTune
+```
+
+```{r}
+# make vector of predictions
+net_pred <- net %>% predict(newdata = test_std)
+
+# make dataframe to compare with actual values
+net_df <- data.frame(
+  pokedex_number = test_std %>% select(pokedex_number),
+  capture_rate = pokemon_std %>% 
+    filter(pokedex_number %in% test_rows) %>% 
+    select(capture_rate),
+  pred = net_pred
+)
+
+head(net_df)
+```
+###### Random Forest
+
+```{r}
+# set a new seed for this chunk
+set.seed(42712)
+
+# random forest model
+forest = train(
+  # The model: predict average price based on everything else
+  capture_rate ~ .,
+  # The data: non-pre-processed train dataframe, without id
+  data = train %>% select(-c("pokedex_number", "name")),
+  # Use ranger to implement random forest with 100 trees
+  method = "ranger",
+  num.trees = 100,
+  # Evaluate performance with out-of-bag error estimation
+  trControl = trainControl(method = "oob"),
+  # Tuning parameters: mtry - number of random predictors at each split,
+    # splitrule - the rule for splitting,
+    # and min.node.size - minimum number of observations per leaf
+  tuneGrid = expand.grid(
+    "mtry" = c(8, 10, 12, 14),
+    "splitrule" = "variance",
+    "min.node.size" = 1:10
+  )
+)
+```
+
+```{r}
+forest$bestTune
+```
+
+```{r}
+# Make predictions on test set
+forest_pred = forest %>% predict(newdata = test)
+
+# The results
+forest_df <- data.frame(
+  pokedex_number = test %>% select(pokedex_number),
+  capture_rate = pokemon %>% 
+    filter(pokedex_number %in% test_rows) %>% 
+    select(capture_rate),
+  pred = forest_pred
+)
+
+head(forest_df)
+```
+
+##### Evaluate
+
+Let's see how these models did...
+
+```{r}
+# Define a function that takes in our results dataframes and returns test RMSE
+rmse <- function(df){
+    (df$capture_rate - df$pred)^2 %>% mean() %>% sqrt()
+}
+
+# Find the RMSE for each model
+all_data <- data.frame(
+  model_name = c("knn_fight", "knn_peace", "elasticnet", "randomforest"),
+  rmse_vals = c(rmse(knn_fight_df), rmse(knn_peace_df), rmse(net_df), rmse(forest_df))
+)
+
+ggplot(all_data, aes(x = model_name, y = rmse_vals)) +
+  geom_col(aes(fill = model_name)) +
+  geom_text(aes(label = round(rmse_vals, 4)), vjust = -0.5) +
+  labs(
+    title = "Test RMSE Values for Our Models",
+    x = "Model Name",
+    y = "Test RMSE"
+  ) +
+  scale_fill_viridis(
+    discrete = TRUE,
+    labels = c("Elasticnet", "KNN, Fighting Stats", "KNN, Non-Fighting Stats", "Random Forest")) +
+  theme(text = element_text(size = font_size))
+```
+
+All the models pretty much sucked. The standard deviation of the capture rate (in all the data) was `r sd(pokemon_clean$capture_rate)`. The best model (lowest test RMSE) was the random forest, which had a test RMSE of `r rmse(forest_df)`. This suggests that a pokemon's capture rate depends on more than just its fighting abilites and the attributes listed in a pokedex.

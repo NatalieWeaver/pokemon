@@ -1,0 +1,150 @@
+---
+title: "Analysis of Pokemon Stats"
+subtitle: "For all pokemon of Generations I through VII"
+author: "Natalie Weaver"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  xaringan::moon_reader:
+    css: ["default", "metropolis", "metropolis-fonts", "my-css.css"]
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      countIncrementalSlides: false
+---
+exclude: true
+
+```{r, setup, include = FALSE}
+# load packages
+library(pacman)
+p_load(tidyverse, magrittr, janitor, DT, lubridate, viridis, knitr, cowplot)
+
+# knitr options
+opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  echo = FALSE,
+  fig.align = "center",
+  fig.height = 7,
+  fig.width = 10.5,
+  dpi = 500)
+
+options(knitr.table.format = "html")
+
+```
+
+---
+
+## Introduction
+
+Each pokemon has **stats** that determine its abilities in various categories:
+
+* HP (hit points)
+* Attack
+* Defense
+
+Each pokemon has a **primary type** based on its physiology:<sup>✨</sup>
+.footnote[
+✨ and just its general vibe
+]
+
+- Water
+- Fire
+- Rock
+
+Which type of pokemon is the strongest, based on its stats?
+
+---
+
+## Packages and Data
+
+```{r, echo = TRUE, eval = FALSE}
+# load the packages we need for this analysis
+library(pacman)
+p_load(tidyverse, magrittr, viridis)
+```
+
+```{r}
+# load, manipulate, and show the data
+pokemon <- read_csv("pokemon.csv")
+pok_by_type <- pokemon %>% group_by(type1) %>%
+  summarize(
+    mean_hp = mean(hp),
+    mean_attack = mean(attack),
+    mean_sp_attack = mean(sp_attack),
+    mean_defense = mean(defense),
+    mean_sp_defense = mean(sp_defense),
+    mean_speed = mean(speed)
+  )
+pok_by_type %>% head() %>% 
+  datatable(
+    rownames = FALSE,
+    colnames = c("Type", "HP", "Attack", "Sp. Attack", "Defense", "Sp. Defense", "Speed"),
+    options = list(dom = 't', scrollX='400px')
+  ) %>% 
+  formatRound(columns = 2:7, digits = 3)
+```
+
+---
+
+## Stats Breakdown by Type
+
+```{r, fig.height = 5.75}
+pok_by_type_longer <- pok_by_type %>% pivot_longer(
+  cols = !type1,
+  names_to = "stat",
+  values_to = "value"
+)
+
+ggplot(data = pok_by_type_longer, aes(x = type1, y = value)) +
+  geom_bar(stat = "identity", aes(fill = stat)) +
+  guides(x = guide_axis(angle = 90)) +
+  scale_fill_viridis(
+    discrete = TRUE,
+    labels = c("Attack", "Defense", "HP", "Special Attack", "Special Defense", "Speed")
+  ) +
+  labs(
+    x = "Primary Type",
+    y = "Mean of Total Statistics",
+    fill = "Statistic"
+  ) +
+  theme(text = element_text(size = 20))
+
+```
+
+---
+
+## Distribution of Stat Values
+
+```{r}
+# distribution of attack
+attack_hist <- ggplot(data = pokemon, aes(x = attack)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = 10))
+
+# distribution of special attack
+sp_attack_hist <- ggplot(data = pokemon, aes(x = sp_attack)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = 10))
+
+# distribution of defense
+defense_hist <- ggplot(data = pokemon, aes(x = defense)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = 10))
+
+# distribution of special defense
+sp_defense_hist <- ggplot(data = pokemon, aes(x = sp_defense)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = 10))
+
+# distribution of speed
+speed_hist <- ggplot(data = pokemon, aes(x = speed)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = 10))
+
+# distribution of hp
+hp_hist <- ggplot(data = pokemon, aes(x = hp)) +
+  geom_histogram(bins = 20) +
+  theme(text = element_text(size = 10))
+
+plot_grid(attack_hist, sp_attack_hist, defense_hist, sp_defense_hist, speed_hist, hp_hist, NULL, NULL, ncol = 2) 
+```

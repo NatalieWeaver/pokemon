@@ -1,0 +1,76 @@
+---
+title: "Analysis of Pokemon Stats"
+author: Natalie Weaver
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: beamer_presentation
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Introduction
+
+Each pokemon has **stats** that determine its abilities in various categories:
+
+* HP (hit points)
+* Attack
+* Defense
+
+Each pokemon has a **primary type** based on its physiology:
+
+- Water
+- Fire
+- Rock
+
+Which type of pokemon is the strongest, based on its stats?
+
+## Packages and Data
+
+```{r}
+# load the packages we need for this analysis
+library(pacman)
+p_load(tidyverse, magrittr, janitor, viridis)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# load, manipulate, and show the data
+pokemon <- read_csv("pokemon.csv")
+pok_by_type <- pokemon %>% group_by(type1) %>%
+  summarize(
+    mean_hp = mean(hp),
+    mean_attack = mean(attack),
+    mean_sp_attack = mean(sp_attack),
+    mean_defense = mean(defense),
+    mean_sp_defense = mean(sp_defense),
+    mean_speed = mean(speed)
+  )
+pok_by_type %>% head()
+```
+
+## Stats Breakdown by Type
+
+```{r, echo=FALSE}
+pok_by_type_longer <- pok_by_type %>% pivot_longer(
+  cols = !type1,
+  names_to = "stat",
+  values_to = "value"
+)
+
+pok_type_stacked <- ggplot(data = pok_by_type_longer, aes(x = type1, y = value)) +
+  geom_bar(stat = "identity", aes(fill = stat)) +
+  guides(x = guide_axis(angle = 90)) +
+  scale_fill_viridis(
+    discrete = TRUE,
+    labels = c("Attack", "Defense", "HP", "Special Attack", "Special Defense", "Speed")
+  ) +
+  labs(
+    title = "Mean of Total Statistics by Pokemon Primary Type",
+    subtitle = "For pokemon in Generations I through VII",
+    x = "Primary Type",
+    y = "Mean of Total Statistics",
+    fill = "Statistic"
+  )
+
+pok_type_stacked
+```
