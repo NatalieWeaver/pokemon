@@ -6,4 +6,4 @@ If you've made your way to this page, you probably don't want to be here. This i
 * All of the tidyverse stuff
 * Machine learning.
 
-The most recent analysis can be found [here](https://github.com/NatalieWeaver/pokemon/blob/main/pokemon.nb.html)
+The most recent analysis can be found [here](https://htmlpreview.github.io/?https://github.com/NatalieWeaver/pokemon/blob/main/pokemon.nb.html)
