@@ -6,4 +6,6 @@ If you've made your way to this page, you probably don't want to be here. This i
 * All of the tidyverse stuff
 * Machine learning.
 
-The most recent analysis can be found <a href="https://htmlpreview.github.io/?https://github.com/NatalieWeaver/pokemon/blob/main/pokemon.nb.html" target="_blank">here</a>.
+The most recent analysis can be found [here](https://htmlpreview.github.io/?https://github.com/NatalieWeaver/pokemon/blob/main/pokemon.nb.html).
+
+The data can be found in this repository [here](https://github.com/NatalieWeaver/pokemon/blob/main/pokemon.csv), and I got it from Kaggle [here](https://www.kaggle.com/rounakbanik/pokemon).
